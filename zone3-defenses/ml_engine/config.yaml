@@ -1,0 +1,17 @@
+# Warmup model for ordinary HTTP metadata. Thresholds can be overridden
+# with ML_SCORE_THRESHOLD and ML_RATE_ZSCORE_THRESHOLD.
+model:
+  algorithm: isolation_forest
+  contamination: 0.02
+  n_estimators: 80
+  random_state: 42
+  baseline_samples: 600
+  score_threshold: 0.65
+rate:
+  window_seconds: 60
+  zscore_threshold: 3.0
+baseline:
+  path: /tmp/cyberforge-baseline.joblib
+server:
+  host: 0.0.0.0
+  port: 8080
