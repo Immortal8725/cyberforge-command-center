@@ -1,0 +1,38 @@
+# Ship benign JSON access logs to the local Elasticsearch node.
+# ELASTICSEARCH_HOSTS is set by docker-compose.yml.
+
+filebeat.inputs:
+  - type: filestream
+    id: cyberforge-access
+    enabled: true
+    paths:
+      - /var/log/cyberforge/access.jsonl
+    parsers:
+      - ndjson:
+          target: ""
+          overwrite_keys: true
+          add_error_key: true
+          expand_keys: false
+
+processors:
+  - add_fields:
+      target: event
+      fields:
+        dataset: cyberforge.access
+        kind: event
+        category: web
+
+output.elasticsearch:
+  hosts: ["${ELASTICSEARCH_HOSTS:http://elasticsearch:9200}"]
+  index: "cyberforge-access-%{+yyyy.MM.dd}"
+
+setup.ilm.enabled: false
+setup.template.enabled: true
+setup.template.name: cyberforge-access
+setup.template.pattern: cyberforge-access-*
+setup.template.settings:
+  index.number_of_shards: 1
+  index.number_of_replicas: 0
+
+logging.level: info
+logging.to_stderr: true

@@ -1,0 +1,126 @@
+# CyberForge defensive core.
+# Elasticsearch, Kibana, Filebeat, a benign access-log generator, and the
+# Zone 3 anomaly engine. No target applications are defined here.
+name: ${COMPOSE_PROJECT_NAME:-cyberforge}
+
+services:
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:${ELASTIC_VERSION:-8.19.23}
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      xpack.security.enrollment.enabled: "false"
+      xpack.security.http.ssl.enabled: "false"
+      xpack.ml.enabled: "false"
+      ingest.geoip.downloader.enabled: "false"
+      cluster.name: cyberforge
+      ES_JAVA_OPTS: "${ES_JAVA_OPTS:--Xms512m -Xmx512m}"
+    ports:
+      - "127.0.0.1:${ELASTICSEARCH_PORT:-9200}:9200"
+    volumes:
+      - es-data:/usr/share/elasticsearch/data
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health | grep -qE '\"status\":\"(green|yellow)\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 40s
+    restart: unless-stopped
+    networks:
+      - defenses
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:${ELASTIC_VERSION:-8.19.23}
+    environment:
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+      XPACK_SECURITY_ENABLED: "false"
+      XPACK_ENCRYPTEDSAVEDOBJECTS_ENCRYPTIONKEY: ${KIBANA_ENCRYPTION_KEY:-cyberforge-local-lab-key-32b-min}
+      XPACK_REPORTING_ENCRYPTIONKEY: ${KIBANA_ENCRYPTION_KEY:-cyberforge-local-lab-key-32b-min}
+      XPACK_SECURITY_ENCRYPTIONKEY: ${KIBANA_ENCRYPTION_KEY:-cyberforge-local-lab-key-32b-min}
+      SERVER_NAME: cyberforge-kibana
+    ports:
+      - "127.0.0.1:${KIBANA_PORT:-5601}:5601"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:5601/api/status >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    restart: unless-stopped
+    networks:
+      - defenses
+
+  log-generator:
+    build:
+      context: ./zone3-defenses/log_generator
+    image: cyberforge/log-generator:phase1
+    volumes:
+      - cyberforge-logs:/var/log/cyberforge
+    healthcheck:
+      test: ["CMD-SHELL", "test -s /var/log/cyberforge/access.jsonl"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+    networks:
+      - defenses
+
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:${ELASTIC_VERSION:-8.19.23}
+    user: root
+    command: ["-e", "--strict.perms=false"]
+    environment:
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+    volumes:
+      - ./zone3-defenses/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - cyberforge-logs:/var/log/cyberforge:ro
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+      log-generator:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "filebeat", "test", "config", "--strict.perms=false"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    networks:
+      - defenses
+
+  ml_engine:
+    build:
+      context: ./zone3-defenses/ml_engine
+    image: cyberforge/ml-engine:phase1
+    environment:
+      ML_SCORE_THRESHOLD: ${ML_SCORE_THRESHOLD:-0.65}
+      ML_RATE_ZSCORE_THRESHOLD: ${ML_RATE_ZSCORE_THRESHOLD:-3.0}
+      ML_BASELINE_PATH: /tmp/cyberforge-baseline.joblib
+    ports:
+      - "127.0.0.1:${ML_ENGINE_PORT:-8088}:8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+    networks:
+      - defenses
+
+networks:
+  defenses:
+    name: cyberforge-defenses
+
+volumes:
+  es-data:
+  cyberforge-logs:
